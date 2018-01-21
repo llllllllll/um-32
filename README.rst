@@ -9,6 +9,24 @@ horror at boundvariable.org.
 I wrote this because a friend did a `Rust implementation
 <https://github.com/jgrillo/um32>`_.
 
+Options
+-------
+
+When compiling, the following options may be set:
+
+``-D UM_COW_VECTOR``
+~~~~~~~~~~~~~~~~~~~~
+
+Use copy-on-write vectors for the arrays. This adds a performance penalty to
+array reads and writes; but, it make load program much faster in most
+cases.
+
+``-D UM_PRINT_OPNAME``
+~~~~~~~~~~~~~~~~~~~~~~
+
+Print the name of each instruction during execution. This is useful to provide a
+debugging trace when a crash occurs.
+
 
 Performance
 -----------

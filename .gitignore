@@ -6,3 +6,8 @@ out
 .gdb_history
 #*
 *~
+
+a.um
+scratch.py
+*.pyc
+callgrind.out.*

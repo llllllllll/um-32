@@ -6,7 +6,17 @@
 #include <tuple>
 #include <vector>
 
+#include "cow_vector.h"
+
 namespace um {
+#ifdef UM_USE_COW_VECTOR
+template<typename T>
+using array_vector = cow_vector<T>;
+#else
+template<typename T>
+using array_vector = std::vector<T>;
+#endif
+
 using platter = uint32_t;
 
 enum class opcode : uint8_t {
@@ -57,7 +67,7 @@ class machine {
 private:
     std::array<platter, 8> m_registers;
     std::vector<platter> m_free_list;
-    std::vector<std::vector<platter>> m_arrays;
+    std::vector<array_vector<platter>> m_arrays;
     std::size_t m_execution_finger;
 
     struct halting {};
@@ -168,9 +178,9 @@ private:
     };
 
 public:
-    machine(std::vector<platter>&& program)
+    machine(const array_vector<platter>& program)
         : m_registers({0, 0, 0, 0, 0, 0, 0, 0}),
-          m_arrays({std::move(program)}),
+          m_arrays({program}),
           m_execution_finger(0) {}
 
     static machine parse(std::istream& stream) {
@@ -182,7 +192,7 @@ public:
             throw malformed_program();
         }
 
-        std::vector<platter> program(size / 4, 0);
+        array_vector<platter> program(size / 4, 0);
 
         stream.read(reinterpret_cast<char*>(program.data()), size);
 
@@ -195,6 +205,7 @@ public:
     void step() {
         platter instruction = m_arrays[0][m_execution_finger++];
         opcode op = read_opcode(instruction);
+
 #ifdef UM_PRINT_OPNAME
         std::cout << opname[static_cast<uint8_t>(op)] << '\n';
 #endif
