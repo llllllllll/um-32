@@ -100,3 +100,38 @@ Performance
    real	   0m31.133s
    user	   0m31.084s
    sys	   0m0.007s
+
+
+``UML`` - The Universal Machine Language
+----------------------------------------
+
+What good is a VM without the ability to compile programs for it. the
+``compiler`` directory includes a WIP compiler for a simple imperative
+programming language that compiles to the UM-32 machine.
+
+The language supports two data types:
+
+1. ``platter``: A scalar platter.
+2. ``array``: A fixed-length array of platters. The layout is: ``[length, ix_0,
+   ix_1, ..., ix_n]``. String and array are synonyms.
+
+
+The syntax borrows heavily from Python, for example, a hello world program may
+look like:
+
+.. code-block:: python
+
+   def print(cs):
+       for c in cs:
+           um.putchar(c)
+
+       um.putchar('\n')  # newline
+
+   def main():
+       print("Hello World!")
+
+
+``um.putchar`` is a built-in macro which writes a single character to the
+terminal.
+
+See ``compiler/README.rst`` for implementation details.

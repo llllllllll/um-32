@@ -1,0 +1,10 @@
+def hello():
+    um.putchar('H')
+    um.putchar('e')
+
+
+def main():
+    hello = "Hello World!"
+    for char in hello:
+        um.putchar(char)
+    um.putchar(10)

@@ -11,3 +11,5 @@ a.um
 scratch.py
 *.pyc
 callgrind.out.*
+
+compiler/a.um
