@@ -1,4 +1,3 @@
-from functools import total_ordering
 from operator import index
 
 from .runtime_constants import Register, CallContext, STACK_ENTRY_POINTERS
@@ -27,76 +26,29 @@ def set_bits(n, start, count, value):
     return (n & mask) | (value << start)
 
 
-@total_ordering
-class PlaceholderInt:
-    def __init__(self, multiply=1, add=0):
-        self._value = None
-        self._multiply = multiply
-        self._add = add
-
-        self._children = []
-
-    @property
-    def value(self):
-        if self._value is None:
-            return None
-
-        return self._value * self._multiply + self._add
-
-    @value.setter
-    def value(self, v):
-        self._value = v
-
-        for child in self._children:
-            child.value = v
-
-    def __le__(self, other):
-        if self.value is None:
-            return True
-        return self.value <= other
-
-    def __add__(self, other):
-        if self._value is None:
-            new = PlaceholderInt(add=self._add + other)
-            self._children.append(new)
-            return new
-
-        return self.value + other
-
-    def __sub__(self, other):
-        if self._value is None:
-            new = PlaceholderInt(add=self._add - other)
-            self._children.append(new)
-            return new
-
-        return self.value - other
-
-    def __index__(self):
-        if self._value is None:
-            raise ValueError('placeholder was not filled in')
-
-        return self.value
-
-    def __repr__(self):
-        return f'{type(self).__name__}({self.value})'
+def _get_register_int(r):
+    try:
+        return r._underlying_register
+    except AttributeError:
+        return r
 
 
 class Instruction:
     def __init__(self, a=0, b=0, c=0):
-        self.a = a
-        self.b = b
-        self.c = c
+        self.a = _get_register_int(a)
+        self.b = _get_register_int(b)
+        self.c = _get_register_int(c)
 
     @property
-    def bytes(self):
+    def raw_instruction(self):
         instruction = set_bits(0, 28, 4, self.opcode)
         instruction = set_bits(instruction, 6, 3, index(self.a))
         instruction = set_bits(instruction, 3, 3, index(self.b))
         instruction = set_bits(instruction, 0, 3, index(self.c))
         return instruction.to_bytes(4, 'big')
 
-    def low_level_instructions(self):
-        yield self
+    def instructions(self):
+        yield self.raw_instruction
 
     def __repr__(self):
         return f'{type(self).__name__}(a={self.a}, b={self.b}, c={self.c})'
@@ -181,7 +133,7 @@ class Orthography(Instruction):
         self.value = value
 
     @property
-    def bytes(self):
+    def raw_instruction(self):
         instruction = set_bits(0, 28, 4, self.opcode)
         instruction = set_bits(instruction, 25, 3, index(self.register))
         instruction = set_bits(instruction, 0, 25, index(self.value))
@@ -198,9 +150,10 @@ class IRInstruction(object):
 
 
 class Immediate(IRInstruction):
-    def __init__(self, register, value):
+    def __init__(self, register, value, register_allocator):
         self.register = register
         self.value = value
+        self.allocator = register_allocator
 
     def low_level_instructions(self):
         register = self.register
@@ -210,18 +163,17 @@ class Immediate(IRInstruction):
             yield Orthography(register, value)
 
         else:
-            acc = Register.bx if register != Register.bx else Register.ax
-
-            yield Orthography(register, Orthography.max_value)
-            value -= Orthography.max_value
-            while value > Orthography.max_value:
-                yield Orthography(acc, Orthography.max_value)
-                yield Addition(register, register, acc)
+            with self.allocator.occupy() as acc:
+                yield Orthography(register, Orthography.max_value)
                 value -= Orthography.max_value
+                while value > Orthography.max_value:
+                    yield Orthography(acc, Orthography.max_value)
+                    yield Addition(register, register, acc)
+                    value -= Orthography.max_value
 
-            if value:
-                yield Orthography(acc, value)
-                yield Addition(register, register, acc)
+                if value:
+                    yield Orthography(acc, value)
+                    yield Addition(register, register, acc)
 
 
 class AddImmediate(IRInstruction):
@@ -323,7 +275,7 @@ class Call(IRInstruction):
 
 
 class Return(IRInstruction):
-    def __init__(self):
+    def __init__(self, allocator):
         self.instructions = (
             Immediate(Register.ax, CallContext.stack_depth),
             ArrayIndex(Register.bx, Register.call_context, Register.ax),
