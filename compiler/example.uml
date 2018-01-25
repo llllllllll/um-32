@@ -1,14 +1,2 @@
-def main():
-    um.putchar('H')
-    um.putchar('e')
-    um.putchar('l')
-    um.putchar('l')
-    um.putchar('o')
-    um.putchar(' ')
-    um.putchar('W')
-    um.putchar('o')
-    um.putchar('r')
-    um.putchar('l')
-    um.putchar('d')
-    um.putchar('!')
-    um.putchar('\n')
+def main() -> uint:
+    um.putchar(65)

@@ -9,15 +9,22 @@ def main():
         )
         return -1
 
-    from compiler.compiler import compile
+    from compiler.ast import parse
+    from compiler.compiler import compile_ast
 
     try:
         out_path = sys.argv[2]
     except IndexError:
         out_path = 'a.um'
 
-    with open(sys.argv[1]) as source_file, open(out_path, 'wb') as out_file:
-        out_file.write(compile(source_file.read()))
+    with open(sys.argv[1]) as source_file:
+        source = source_file.read()
+
+    tree = parse(source, filename=sys.argv[1])
+    bytecode = compile_ast(tree)
+
+    with open(out_path, 'wb') as out_file:
+        out_file.write(bytecode)
 
     return 0
 

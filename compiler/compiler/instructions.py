@@ -45,10 +45,10 @@ class Instruction:
         instruction = set_bits(instruction, 6, 3, index(self.a))
         instruction = set_bits(instruction, 3, 3, index(self.b))
         instruction = set_bits(instruction, 0, 3, index(self.c))
-        return instruction.to_bytes(4, 'big')
+        return instruction
 
-    def instructions(self):
-        yield self.raw_instruction
+    def low_level_instructions(self):
+        yield self
 
     def __repr__(self):
         return f'{type(self).__name__}(a={self.a}, b={self.b}, c={self.c})'
@@ -129,7 +129,7 @@ class Orthography(Instruction):
                 f' than {self.max_value}: {value}',
             )
 
-        self.register = register
+        self.register = _get_register_int(register)
         self.value = value
 
     @property
@@ -137,7 +137,7 @@ class Orthography(Instruction):
         instruction = set_bits(0, 28, 4, self.opcode)
         instruction = set_bits(instruction, 25, 3, index(self.register))
         instruction = set_bits(instruction, 0, 25, index(self.value))
-        return instruction.to_bytes(4, 'big')
+        return instruction
 
     def __repr__(self):
         return f'{type(self).__name__}({self.register}, {self.value})'

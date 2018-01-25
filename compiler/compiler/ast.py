@@ -9,6 +9,15 @@ class ArrayLiteral(immutable):
 
     type = 'array'
 
+    def __hash__(self):
+        return hash((type(self), self.value))
+
+    def __eq__(self, other):
+        if not isinstance(other, __class__):  # noqa
+            return NotImplemented
+
+        return self.value == other.value
+
 
 class UIntLiteral(immutable):
     __slots__ = 'value',
@@ -25,7 +34,16 @@ class Assignment(immutable):
 
 
 class FunctionDef(immutable):
-    __slots__ = 'name', 'args', 'body', 'return_type'
+    __slots__ = 'name', 'args', 'locals', 'body', 'return_type'
+
+    def __hash__(self):
+        return hash((type(self), self.name))
+
+    def __eq__(self, other):
+        if not isinstance(other, __class__):  # noqa
+            return NotImplemented
+
+        return self.name == other.name
 
 
 class Return(immutable):
@@ -35,13 +53,40 @@ class Return(immutable):
 class Argument(immutable):
     __slots__ = 'name', 'type'
 
+    def __hash__(self):
+        return hash((type(self), self.name))
+
+    def __eq__(self, other):
+        if not isinstance(other, __class__):  # noqa
+            return NotImplemented
+
+        return self.name == other.name
+
 
 class Local(immutable):
     __slots__ = 'name', 'type'
 
+    def __hash__(self):
+        return hash((type(self), self.name))
+
+    def __eq__(self, other):
+        if not isinstance(other, __class__):  # noqa
+            return NotImplemented
+
+        return self.name == other.name
+
 
 class Global(immutable):
     __slots__ = 'name', 'type', 'value'
+
+    def __hash__(self):
+        return hash((type(self), self.name))
+
+    def __eq__(self, other):
+        if not isinstance(other, __class__):  # noqa
+            return NotImplemented
+
+        return self.name == other.name
 
 
 class Call(immutable):
@@ -235,10 +280,16 @@ class _TopLevelTranslator(_AstTranslator):
         for n in node.body:
             t.visit(n)
 
+        argnames = {arg.name for arg in args}
         self.body.append(
             FunctionDef(
                 name=node.name,
                 args=args,
+                locals=[
+                    v
+                    for n, (k, v) in enumerate(t.namespace.items())
+                    if k not in argnames
+                ],
                 body=body,
                 return_type=return_type,
             ),
@@ -248,7 +299,7 @@ class _TopLevelTranslator(_AstTranslator):
 class _FunctionTranslator(_AstTranslator):
     def __init__(self, arguments, return_type, *args, **kwarg):
         super().__init__(*args, **kwarg)
-        self._namespace = {arg.name: arg for arg in arguments}
+        self.namespace = {arg.name: arg for arg in arguments}
         self._return_type = return_type
 
     def visit_FunctionDef(self, node):
@@ -347,11 +398,11 @@ class _FunctionTranslator(_AstTranslator):
 
     def visit_Name(self, node):
         if isinstance(node.ctx, ast.Load):
-            if node.id not in self._namespace and node.id not in self.globals:
+            if node.id not in self.namespace and node.id not in self.globals:
                 self.syntax_error(node, f'undefined variable {node.id!r}')
 
-            if node.id in self._namespace:
-                self.body.append(self._namespace[node.id])
+            if node.id in self.namespace:
+                self.body.append(self.namespace[node.id])
             else:
                 self.body.append(self.globals[node.id])
 
@@ -364,7 +415,7 @@ class _FunctionTranslator(_AstTranslator):
             self.syntax_error(target, 'invalid lhs')
 
         name = target.id
-        if name not in self._namespace:
+        if name not in self.namespace:
             self.process_annotation(None, target)
 
         with self.scoped_body() as rhs_nodes:
@@ -375,7 +426,7 @@ class _FunctionTranslator(_AstTranslator):
         )
         rhs, = rhs_nodes
 
-        lhs = self._namespace[name]
+        lhs = self.namespace[name]
 
         if rhs.type != lhs.type:
             self.syntax_error(
@@ -391,7 +442,7 @@ class _FunctionTranslator(_AstTranslator):
             self.syntax_error(target, 'invalid lhs')
 
         name = target.id
-        if name in self._namespace:
+        if name in self.namespace:
             self.syntax_error(node, f'redefinition of local variable {name!r}')
 
         type_ = self.process_annotation(node.annotation, node)
@@ -409,7 +460,9 @@ class _FunctionTranslator(_AstTranslator):
                 f'invalid assignment lhs :: {type_}, rhs :: {rhs.type}',
             )
 
-        self.body.append(Assignment(Local(name, type_), rhs))
+        lhs = Local(name, type_)
+        self.namespace[name] = lhs
+        self.body.append(Assignment(lhs, rhs))
 
 
 def parse(source, filename='<unknown>'):

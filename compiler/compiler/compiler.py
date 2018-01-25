@@ -1,9 +1,18 @@
-from functools import partial
+from functools import singledispatch
+from itertools import chain
 import sys
 
 from . import ast
 from . import instructions as instrs
+from .immutable import immutable
 from .runtime_constants import Register
+
+
+def _static_allocations_without_literal_arrays(nodes):
+    for n, node in enumerate(nodes):
+        if ((isinstance(node, ast.Global) and node.type == 'array') or
+                isinstance(node, ast.FunctionDef)):
+            yield node, n
 
 
 class OccupiedRegister:
@@ -47,76 +56,219 @@ class RegisterAllocator:
         return OccupiedRegister(underlying, self)
 
 
-class FunctionCompiler:
-    _hooks = {}
+class Context(immutable):
+    __slots__ = (
+        'static_allocations',
+        'registers',
+        'locals',
+        'arguments',
+    )
 
-    def _compiles(type_, function, hooks=_hooks):
-        hooks[type_] = function
-        return function
+    def __init__(self,
+                 static_allocations,
+                 registers=None,
+                 locals=None,
+                 arguments=None):
+        if registers is None:
+            registers = RegisterAllocator()
 
-    compiles = partial(_compiles)
-    del _compiles
+        self.static_allocations = static_allocations
+        self.registers = registers
+        self.locals = locals
+        self.arguments = arguments
 
-    def __init__(self):
-        self.registers = RegisterAllocator()
+    def static_address(self, node):
+        return self.static_allocations.setdefault(
+            node,
+            len(self.static_allocations),
+        )
 
-    def compute_into_register(self, node):
-        out = self.registers.occupy()
+    def immediate(self, register, value):
+        return instrs.Immediate(register, value, self.registers)
 
-        if isinstance(node, ast.Local):
-            address = self._locals_address[node.name]
-            self.body.extend((
-                instrs.Immediate(out, address),
-                instrs.ArrayIndex(
-                        out,
-                        Register.locals,
-                        out,
-                ),
-            ))
-        elif isinstance(node, ast.Global):
-            if node.type == 'uint':
-                self.body.append(instrs.Immediate(out, node.value))
+
+@singledispatch
+def compile_node(node, ctx):
+    raise NotImplementedError(
+        f'cannot compile node of type {type(node).__name__}',
+    )
+
+
+@compile_node.register(ast.FunctionDef)
+def _compile_function_def(node, ctx):
+    locals_ = {l: n for n, l in enumerate(node.locals)}
+    arguments = {arg: n for n, arg in enumerate(node.args)}
+    ctx = ctx.update(
+        locals=locals_,
+        arguments=arguments,
+    )
+
+    for subnode in node.body:
+        yield from compile_node(subnode, ctx)
+
+    if node.name == 'main':
+        yield instrs.Halt()
+
+
+@singledispatch
+def compute_into_register(node, ctx):
+    raise NotImplementedError(
+        f'cannot compute node of type {type(node).__name__}: {node!r}',
+    )
+
+
+@compute_into_register.register(ast.Local)
+def _compute_local(node, ctx):
+    out = ctx.registers.occupy()
+    address = ctx.locals[node]
+    yield ctx.immediate(out, address)
+    yield instrs.ArrayIndex(
+        out,
+        Register.locals,
+        out,
+    )
+    return out
+
+
+@compute_into_register.register(ast.Argument)
+def _compute_argument(node, ctx):
+    out = ctx.registers.occupy()
+    address = ctx.arguments[node]
+    yield ctx.immediate(out, address)
+    yield instrs.ArrayIndex(
+        out,
+        Register.arguments,
+        out,
+    )
+    return out
+
+
+@compute_into_register.register(ast.Global)
+def _compute_global(node, ctx):
+    out = ctx.registers.occupy()
+
+    if node.type == 'uint':
+        yield ctx.immediate(out, node.value)
+    else:
+        yield ctx.immediate(out, ctx.static_address(node))
+
+    return out
+
+
+@compute_into_register.register(ast.UIntLiteral)
+def _compute_uint_literal(node, ctx):
+    out = ctx.registers.occupy()
+    yield ctx.immediate(out, node.value)
+    return out
+
+
+@compute_into_register.register(ast.ArrayLiteral)
+def _compute_array_literal(node, ctx):
+    out = ctx.registers.occupy()
+    yield ctx.immediate(out, ctx.static_address(node))
+    return out
+
+
+@compile_node.register(ast.BuiltinCall)
+def _builtin_call(node, ctx):
+    if node.name == 'putchar':
+        with (yield from compute_into_register(node.args[0], ctx)) as arg:
+            yield instrs.Output(arg)
+    else:
+        raise NotImplementedError(
+            f'no implementation for built-in {node.name!r}',
+        )
+
+
+@compute_into_register.register(ast.BinOp)
+def _binop(node, ctx):
+    lhs = (yield from compute_into_register(node.lhs, ctx))
+    with (yield from compute_into_register(node.rhs, ctx)) as rhs:
+        if node.op == '+':
+            yield instrs.Addition(lhs, lhs, rhs)
+        elif node.op == '*':
+            yield instrs.Multiplication(lhs, lhs, rhs)
+        elif node.op == '/':
+            yield instrs.Division(lhs, lhs, rhs)
+        else:
+            raise NotImplementedError(f'op {node.op} not supported')
+
+    return lhs
+
+
+@compile_node.register(ast.Assignment)
+def _assignment(node, ctx):
+    if isinstance(node.lhs, ast.Local):
+        address_map = ctx.locals
+        array_register = Register.locals
+    else:
+        address_map = ctx.arguments
+        array_register = Register.arguments
+
+    with (yield from compute_into_register(node.rhs, ctx)) as rhs:
+        address = address_map[node.lhs]
+        with ctx.registers.occupy() as address_register:
+            yield ctx.immediate(address_register, address)
+            yield instrs.ArrayAmmendment(
+                array_register,
+                address_register,
+                rhs,
+            )
+
+
+def _write_functions(ctx, function_bodies):
+
+    def inner_write_functions():
+        main = None
+
+        for address, (name, instructions) in function_bodies.items():
+            raw_instructions = [
+                instr.raw_instruction for instr in instructions
+            ]
+            array = ctx.registers.occupy()
+            yield instrs.Allocation(array, len(raw_instructions))
+            for raw_instruction in raw_instructions:
+                with ctx.registers.occupy() as imm:
+                    yield ctx.immediate(imm, raw_instruction)
+
+            if name == 'main':
+                main = array
             else:
-                self.body.append(
-                    instrs.Immediate(
-                        out,
-                        self.array_address[node.value],
+                array.release()
+
+        return main
+
+    main = yield from inner_write_functions()
+    if main is None:
+        raise SyntaxError('no main function')
+
+    with ctx.registers.occupy() as imm:
+        yield ctx.immediate(imm, 0)
+        yield instrs.LoadProgram(main, imm)
+
+
+def compile_ast(nodes):
+    static_allocations = dict(
+        _static_allocations_without_literal_arrays(nodes),
+    )
+
+    ctx = Context(static_allocations)
+
+    function_bodies = {}
+    for node in nodes:
+        if isinstance(node, ast.FunctionDef):
+            function_bodies[static_allocations[node]] = (
+                node.name,
+                list(
+                    chain.from_iterable(
+                        instr.low_level_instructions()
+                        for instr in compile_node(node, ctx)
                     ),
-                )
-        else:
-            raise AssertionError(
-                f'cannot compute {type(node).__name__} nodes into registers',
+                ),
             )
 
-        return out
-
-    @compiles(ast.Assignment)  # noqa
-    def _(self, node):
-        if isinstance(node.lhs, ast.Local):
-            address_map = self._local_address
-            array_register = Register.locals
-        else:
-            address_map = self._argument_address
-            array_register = Register.arguments
-
-        with self.compute_in_register(node.rhs) as rhs_register:
-            address = address_map[node.lhs]
-            with self.registers.occupy() as address_register:
-                self.body.extend((
-                    instrs.Immediate(address_register, address),
-                    instrs.ArrayAmmendment(
-                        array_register,
-                        address_register,
-                        rhs_register,
-                    ),
-                ))
-
-    @compiles(ast.BuiltinCall)  # noqa
-    def _(self, node):
-        if node.name == 'putchar':
-            with self.compute_in_register(node.args[0]) as arg_register:
-                self.body.append(instrs.Output(arg_register))
-        else:
-            raise NotImplementedError(
-                f'no implementation for built-in {node.name!r}',
-            )
+    return b''.join(
+        ll.raw_instruction.to_bytes(4, 'big')
+        for instr in _write_functions(ctx, function_bodies)
+        for ll in instr.low_level_instructions()
+    )
