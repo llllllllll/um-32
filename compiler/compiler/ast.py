@@ -97,12 +97,22 @@ class BuiltinCall(immutable):
     __slots__ = 'name', 'args', 'type'
 
     valid = {
+        'len': ((Argument('arr', 'array'),), 'uint'),
         'putchar': ((Argument('c', 'uint'),), 'void'),
+        'alloc': ((Argument('size', 'uint'),), 'array'),
+        'free': ((Argument('arr', 'array'),), 'void'),
+        'exit': ((), 'void'),
     }
 
 
 class BinOp(immutable):
     __slots__ = 'op', 'lhs', 'rhs'
+
+    type = 'uint'
+
+
+class Subscript(immutable):
+    __slots__ = 'array', 'index'
 
     type = 'uint'
 
@@ -141,8 +151,8 @@ class _AstTranslator(ast.NodeVisitor):
         if not isinstance(node, ast.Name):
             self.syntax_error(node, 'type must be a name')
 
-        if node.id not in ('uint', 'array'):
-            self.syntax_error(node, 'type must be uint or array')
+        if node.id not in ('uint', 'array', 'void'):
+            self.syntax_error(node, 'type must be uint, array or void')
 
         return node.id
 
@@ -285,11 +295,11 @@ class _TopLevelTranslator(_AstTranslator):
             FunctionDef(
                 name=node.name,
                 args=args,
-                locals=[
+                locals=tuple(
                     v
                     for n, (k, v) in enumerate(t.namespace.items())
                     if k not in argnames
-                ],
+                ),
                 body=body,
                 return_type=return_type,
             ),
@@ -341,8 +351,10 @@ class _FunctionTranslator(_AstTranslator):
         if node.value is None:
             if self.return_type == 'array':
                 self.body.append(Return(ArrayLiteral([])))
-            else:
+            elif self.return_type == 'uint':
                 self.body.append(Return(UIntLiteral(0)))
+            else:
+                self.body.Append(Return(None))
             return
 
         with self.scoped_body() as return_value:
@@ -370,6 +382,7 @@ class _FunctionTranslator(_AstTranslator):
                 self.syntax_error(node.func.value, 'unknown builtin function')
             type_ = BuiltinCall
             name = node.func.attr
+            qualname = f'um.{name}'
             arg_defs, return_type = BuiltinCall.valid[name]
         elif not isinstance(node.func, ast.Name):
             self.syntax_error(node.func, 'function must be a name')
@@ -377,12 +390,20 @@ class _FunctionTranslator(_AstTranslator):
             self.syntax_error(node.func, 'unknown function')
         else:
             type_ = Call
-            name = node.func.id
+            qualname = name = node.func.id
             arg_defs, return_type = self.functions[name]
 
         with self.scoped_body() as args:
             for arg in node.args:
                 self.visit(arg)
+
+        if len(args) != len(arg_defs):
+            self.syntax_error(
+                node,
+                f'function {qualname} expects {len(arg_defs)}'
+                f' argument{"s" if len(arg_defs) != 1 else ""} but was'
+                f' passed {len(args)}',
+            )
 
         it = enumerate(zip(node.args, args, arg_defs))
         for n, (py_node, arg_node, arg_definition) in it:
@@ -396,6 +417,74 @@ class _FunctionTranslator(_AstTranslator):
 
         self.body.append(type_(name, args, return_type))
 
+    def visit_For(self, node):
+        if node.orelse:
+            self.syntax_error(node, 'UML does not support for-else')
+
+        with self.scoped_body() as target:
+            self.visit(node.target)
+
+        if not target:
+            if not isinstance(node.target, ast.Name):
+                self.syntax_error(node.target, 'invalid loop target')
+
+            name = node.target.id
+            self.namespace[name] = target = Local(name, 'uint')
+        else:
+            assert len(target) == 1, (
+                f'incorrect number of target nodes: {target}'
+            )
+            target, = target
+
+        if not isinstance(target, (Local, Argument)):
+            self.syntax_error(node.target, 'invalid loop target')
+
+        with self.scoped_body() as iterator:
+            self.visit(node.iter)
+
+        assert len(iterator) == 1, (
+            f'incorrect number of iterator nodes: {iterator}'
+        )
+        iterator, = iterator
+        if iterator.type != 'array':
+            self.syntax_error(
+                node.iter,
+                f'cannot iterate over values of type {iterator.type}',
+            )
+
+        with self.scoped_body() as body:
+            for n in node.body:
+                self.visit(n)
+
+        self.body.append(For(
+            target,
+            iterator,
+            body,
+        ))
+
+    def visit_Subscript(self, node):
+        with self.scoped_body() as arr:
+            self.visit(node.value)
+
+        if not len(arr) == 1:
+            self.syntax_error(node.value, 'invalid array for subscript')
+
+        arr, = arr
+        if arr.type != 'array':
+            self.syntax_error(node.value, 'can only index arrays')
+
+        with self.scoped_body() as ix:
+            self.visit(node.slice)
+
+        if not len(ix) == 1:
+            self.syntax_error(node.slice, 'invalid index')
+        ix, = ix
+
+        if ix.type != 'uint':
+            self.syntax_error(node.slice, 'index must be a uint')
+
+        self.body.append(Subscript(arr, ix))
+
     def visit_Name(self, node):
         if isinstance(node.ctx, ast.Load):
             if node.id not in self.namespace and node.id not in self.globals:
@@ -406,17 +495,29 @@ class _FunctionTranslator(_AstTranslator):
             else:
                 self.body.append(self.globals[node.id])
 
+    def _assign_name_lhs(self, node, target):
+        name = target.id
+        try:
+            return self.namespace[name]
+        except KeyError:
+            self.syntax_error(target, f'undefined variable {name!r}')
+
+    def _assign_subscript_lhs(self, node, target):
+        with self.scoped_body() as lhs:
+            self.visit(target)
+
+        if not len(lhs) == 1:
+            self.syntax_error(target, 'invalid assignment target')
+
+        return lhs[0]
+
     def visit_Assign(self, node):
         if len(node.targets) > 1:
             self.syntax_error(node, 'UML does not support multiple assignment')
 
         target, = node.targets
-        if not isinstance(target, ast.Name):
+        if not isinstance(target, (ast.Name, ast.Subscript)):
             self.syntax_error(target, 'invalid lhs')
-
-        name = target.id
-        if name not in self.namespace:
-            self.process_annotation(None, target)
 
         with self.scoped_body() as rhs_nodes:
             self.visit(node.value)
@@ -426,7 +527,12 @@ class _FunctionTranslator(_AstTranslator):
         )
         rhs, = rhs_nodes
 
-        lhs = self.namespace[name]
+        if isinstance(target, ast.Name):
+            lhs = self._assign_name_lhs(node, target)
+        elif isinstance(target, ast.Subscript):
+            lhs = self._assign_subscript_lhs(node, target)
+        else:
+            self.syntax_error(target, 'invalid assignment target')
 
         if rhs.type != lhs.type:
             self.syntax_error(
@@ -435,6 +541,7 @@ class _FunctionTranslator(_AstTranslator):
             )
 
         self.body.append(Assignment(lhs, rhs))
+
 
     def visit_AnnAssign(self, node):
         target = node.target

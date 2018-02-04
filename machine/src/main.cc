@@ -47,10 +47,10 @@ std::array<std::string, 14> opname = {
     "halt",
     "allocation",
     "abandonment",
-    "output ",
-    "input ",
-    "load_program ",
-    "orthography ",
+    "output",
+    "input",
+    "load_program",
+    "orthography",
 };
 
 platter extract_bits(platter p , uint8_t start, uint8_t count) {
@@ -206,20 +206,31 @@ public:
         platter instruction = m_arrays[0][m_execution_finger++];
         opcode op = read_opcode(instruction);
 
-#ifdef UM_PRINT_OPNAME
-        std::cout << opname[static_cast<uint8_t>(op)] << '\n';
-#endif
-
         if (op == opcode::orthography) {
             uint8_t a_index = extract_bits(instruction, 25, 3);
             platter value = extract_bits(instruction, 0, 25);
+
+#ifdef UM_PRINT_TRACE
+            std::cout << opname[static_cast<uint8_t>(op)]
+                << '(' << static_cast<int>(a_index) << ", " << value << ")\n";
+#endif
+
             orthography(m_registers[a_index], value);
             return;
         }
 
+        auto registers = read_registers(instruction);
+
+#ifdef UM_PRINT_TRACE
+        std::cout << opname[static_cast<uint8_t>(op)]
+                  << '(' << std::get<0>(registers)
+                  << ", " << std::get<1>(registers)
+                  << ", " << std::get<2>(registers)
+                  << ")\n";;
+#endif
+
         std::apply(m_dispatch_table[static_cast<uint8_t>(op)],
-                   std::tuple_cat(std::make_tuple(this),
-                                  read_registers(instruction)));
+                   std::tuple_cat(std::make_tuple(this), std::move(registers)));
     }
 
     void run() {

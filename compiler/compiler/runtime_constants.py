@@ -1,21 +1,25 @@
 import enum
 
 
-MAX_STACK_DEPTH = 1000
-STACK_ENTRY_POINTERS = 4
-
-@enum.unique
-class CallContext(enum.IntEnum):
-    stack_depth = 0
-    stack_start = 1
+STACK_SIZE = 2 ** 10
 
 
 class Register(enum.IntEnum):
+    # scratch registers
     ax = 0
     bx = 1
     cx = 2
     dx = 3
-    arguments = 4
+
+    # locals of the current function
+    locals = 4
+
+    # position independent code table; used to resolve static allocation
+    # addresses to runtime addresses
     pic_table = 5
-    call_context = 6
-    locals = 7
+
+    # the array representing the call stack
+    stack = 6
+
+    # the current stack top index
+    stack_top = 7

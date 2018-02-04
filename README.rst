@@ -21,11 +21,11 @@ Use copy-on-write vectors for the arrays. This adds a performance penalty to
 array reads and writes; but, it make load program much faster in most
 cases.
 
-``-D UM_PRINT_OPNAME``
+``-D UM_PRINT_TRACE``
 ~~~~~~~~~~~~~~~~~~~~~~
 
-Print the name of each instruction during execution. This is useful to provide a
-debugging trace when a crash occurs.
+Print the name of each instruction and the values of each argument before
+execution. This is useful to provide a debugging information.
 
 
 Performance
@@ -105,13 +105,13 @@ Performance
 ``UML`` - The Universal Machine Language
 ----------------------------------------
 
-What good is a VM without the ability to compile programs for it. the
+What good is a VM without the ability to compile programs for it? The
 ``compiler`` directory includes a WIP compiler for a simple imperative
 programming language that compiles to the UM-32 machine.
 
 The language supports two data types:
 
-1. ``platter``: A scalar platter.
+1. ``uint``: A scalar platter.
 2. ``array``: A fixed-length array of platters. The layout is: ``[length, ix_0,
    ix_1, ..., ix_n]``. String and array are synonyms.
 
@@ -121,13 +121,13 @@ look like:
 
 .. code-block:: python
 
-   def print(cs):
+   def print(cs: array) -> void:
        for c in cs:
            um.putchar(c)
 
-       um.putchar('\n')  # newline
+       um.putchar(10)  # newline
 
-   def main():
+   def main() -> void:
        print("Hello World!")
 
 
