@@ -46,6 +46,32 @@ program along with any global arrays or array literals. Once all of the static
 arrays are allocated and initialized, the ``main`` function is loaded with no
 arguments.
 
+Calling Convention
+------------------
+
+When entering a function, the stack will be laid out as follows:
+
+- top of stack
+- return execution finger value
+- arg 0
+- arg 1
+- ...
+- arg n
+- return array address
+- pointer to calling function's locals
+
+The return execution finger sits at the top of the stack to make it easier to
+compute the address.
+
+Shallow Calls
+~~~~~~~~~~~~~
+
+To implement some control flow, there is a notion of a "shallow" call. A shallow
+call is a call which does not change the locals, nor does it push the locals
+array address onto the stack. We use shallow calls in places like if-branches
+where the code is semantically running in the same context as the caller, but is
+boxed into a distinct array for other reasons.
+
 Data
 ----
 

@@ -4,36 +4,42 @@ import contextlib
 from .immutable import immutable
 
 
-class ArrayLiteral(immutable):
-    __slots__ = 'value',
-
-    type = 'array'
+class Node(immutable):
+    __slots__ = ()
 
     def __hash__(self):
-        return hash((type(self), self.value))
+        return hash(
+            (type(self),) + tuple(getattr(self, s) for s in self.__slots__)
+        )
 
     def __eq__(self, other):
         if not isinstance(other, __class__):  # noqa
             return NotImplemented
 
-        return self.value == other.value
+        return self.to_dict() == other.to_dict()
 
 
-class UIntLiteral(immutable):
+class ArrayLiteral(Node):
+    __slots__ = 'value',
+
+    type = 'array'
+
+
+class UIntLiteral(Node):
     __slots__ = 'value',
 
     type = 'uint'
 
 
-class For(immutable):
+class For(Node):
     __slots__ = 'target', 'iterator', 'body'
 
 
-class Assignment(immutable):
+class Assignment(Node):
     __slots__ = 'lhs', 'rhs'
 
 
-class FunctionDef(immutable):
+class FunctionDef(Node):
     __slots__ = 'name', 'args', 'locals', 'body', 'return_type'
 
     def __hash__(self):
@@ -46,11 +52,11 @@ class FunctionDef(immutable):
         return self.name == other.name
 
 
-class Return(immutable):
+class Return(Node):
     __slots__ = 'value',
 
 
-class Argument(immutable):
+class Argument(Node):
     __slots__ = 'name', 'type'
 
     def __hash__(self):
@@ -63,7 +69,7 @@ class Argument(immutable):
         return self.name == other.name
 
 
-class Local(immutable):
+class Local(Node):
     __slots__ = 'name', 'type'
 
     def __hash__(self):
@@ -76,7 +82,7 @@ class Local(immutable):
         return self.name == other.name
 
 
-class Global(immutable):
+class Global(Node):
     __slots__ = 'name', 'type', 'value'
 
     def __hash__(self):
@@ -89,11 +95,11 @@ class Global(immutable):
         return self.name == other.name
 
 
-class Call(immutable):
+class Call(Node):
     __slots__ = 'function', 'args', 'type'
 
 
-class BuiltinCall(immutable):
+class BuiltinCall(Node):
     __slots__ = 'name', 'args', 'type'
 
     valid = {
@@ -105,16 +111,30 @@ class BuiltinCall(immutable):
     }
 
 
-class BinOp(immutable):
+class BinOp(Node):
     __slots__ = 'op', 'lhs', 'rhs'
 
     type = 'uint'
 
 
-class Subscript(immutable):
+class UnOp(Node):
+    __slots__ = 'op', 'operand'
+
+    type = 'uint'
+
+
+class Subscript(Node):
     __slots__ = 'array', 'index'
 
     type = 'uint'
+
+
+class IfBranch(Node):
+    __slots__ = 'body',
+
+
+class If(Node):
+    __slots__ = 'test', 'true', 'false'
 
 
 class _AstTranslator(ast.NodeVisitor):
@@ -315,7 +335,7 @@ class _FunctionTranslator(_AstTranslator):
     def visit_FunctionDef(self, node):
         self.syntax_error(node, 'UML does not support closures')
 
-    _optable = {
+    _binoptable = {
         ast.Add: '+',
         ast.Sub: '-',
         ast.Mult: '*',
@@ -324,9 +344,9 @@ class _FunctionTranslator(_AstTranslator):
 
     def visit_BinOp(self, node):
         try:
-            op = self._optable[type(node.op)]
+            op = self._binoptable[type(node.op)]
         except KeyError:
-            self.syntax_error(node.op, 'unknown operator')
+            self.syntax_error(node, 'unknown operator')
 
         with self.scoped_body() as operands:
             self.visit(node.left)
@@ -346,6 +366,27 @@ class _FunctionTranslator(_AstTranslator):
                 f'cannot add operand of type {rhs.type}',
             )
         self.body.append(BinOp(op, lhs, rhs))
+
+    _unoptable = {
+        ast.UAdd: '+',
+        ast.USub: '-',
+        ast.Invert: '~',
+        ast.Not: 'not',
+    }
+
+    def visit_UnaryOp(self, node):
+        try:
+            op = self._unoptable[type(node.op)]
+        except KeyError:
+            self.syntax_error(node, 'unknown operator')
+
+        with self.scoped_body() as operand:
+            self.visit(node.operand)
+
+        if len(operand) != 1:
+            self.syntax_error(node.operand, 'invalid unary operand')
+
+        self.body.append(UnOp(op, operand[0]))
 
     def visit_Return(self, node):
         if node.value is None:
@@ -415,7 +456,7 @@ class _FunctionTranslator(_AstTranslator):
                     f' {arg_node.type}',
                 )
 
-        self.body.append(type_(name, args, return_type))
+        self.body.append(type_(name, tuple(args), return_type))
 
     def visit_For(self, node):
         if node.orelse:
@@ -462,11 +503,40 @@ class _FunctionTranslator(_AstTranslator):
             body,
         ))
 
+    def visit_If(self, node):
+        with self.scoped_body() as test:
+            self.visit(node.test)
+
+        if len(test) != 1:
+            self.syntax_error(node.test, 'invalid condition')
+
+        test, = test
+        if test.type != 'uint':
+            self.syntax_error(
+                node.test,
+                f'condition must be of type uint, got expression of type'
+                f' {test.type}',
+            )
+
+        with self.scoped_body() as true:
+            for n in node.body:
+                self.visit(n)
+
+        with self.scoped_body() as false:
+            for n in node.orelse:
+                self.visit(n)
+
+        self.body.append(If(
+            test,
+            IfBranch(tuple(true)),
+            IfBranch(tuple(false)),
+        ))
+
     def visit_Subscript(self, node):
         with self.scoped_body() as arr:
             self.visit(node.value)
 
-        if not len(arr) == 1:
+        if len(arr) != 1:
             self.syntax_error(node.value, 'invalid array for subscript')
 
         arr, = arr

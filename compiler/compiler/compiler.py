@@ -1,5 +1,6 @@
 from functools import singledispatch, partial
 from itertools import chain
+import operator
 import sys
 
 from . import ast
@@ -62,6 +63,7 @@ class RegisterAllocator:
 class Context(immutable):
     __slots__ = (
         'static_allocations',
+        'function_bodies',
         'registers',
         'locals',
         'current_array_address',
@@ -69,6 +71,7 @@ class Context(immutable):
 
     def __init__(self,
                  static_allocations,
+                 function_bodies,
                  registers=None,
                  locals=None,
                  current_array_address=None):
@@ -76,6 +79,7 @@ class Context(immutable):
             registers = RegisterAllocator()
 
         self.static_allocations = static_allocations
+        self.function_bodies = function_bodies
         self.registers = registers
         self.locals = locals
         self.current_array_address = current_array_address
@@ -146,6 +150,64 @@ def _compile_function_def(node, ctx):
             yield ctx.pop(Register.locals)
 
             yield instrs.LoadProgram(return_array, return_address)
+
+
+@compile_node.register(ast.If)
+def _compile_if(node, ctx):
+    # recursively compile the branches
+    true_ctx = ctx.update(current_array_address=ctx.static_address(node.true))
+    ctx.function_bodies[node.true] = list(
+        _ll_instrs(compile_node(node.true, true_ctx)),
+    )
+    false_ctx = ctx.update(
+        current_array_address=ctx.static_address(node.false),
+    )
+    ctx.function_bodies[node.false] = list(
+        _ll_instrs(compile_node(node.false, false_ctx)),
+    )
+
+    with ctx.registers.occupy() as current_address:
+        yield ctx.immediate(current_address, ctx.current_array_address)
+        yield instrs.ArrayIndex(
+            current_address,
+            Register.pic_table,
+            current_address,
+        )
+        yield ctx.push(current_address)
+
+    with ctx.registers.occupy() as false:
+        with (yield from compute_into_register(node.test, ctx)) as test, \
+                ctx.registers.occupy() as true:
+            yield ctx.immediate(true, ctx.static_address(node.true))
+            yield instrs.ArrayIndex(true, Register.pic_table, true)
+
+            yield ctx.immediate(false, ctx.static_address(node.false))
+            yield instrs.ArrayIndex(false, Register.pic_table, false)
+
+            ret_address = yield instrs.ConditionalMove(false, true, test)
+            selected_branch_address = false
+
+        with ctx.registers.occupy() as imm:
+            # use an orthography instead of immediate to ensure a fixed size
+            # between the address and the place to resume
+            yield instrs.Orthography(imm, ret_address + 6)
+            yield ctx.push(imm)
+
+            yield instrs.Orthography(imm, 0)
+            yield instrs.LoadProgram(selected_branch_address, imm)
+
+
+@compile_node.register(ast.IfBranch)
+def _compile_if_branch(node, ctx):
+    for subnode in node.body:
+        yield from compile_node(subnode, ctx)
+
+    with ctx.registers.occupy() as return_array, \
+            ctx.registers.occupy() as return_address:
+        yield ctx.pop(return_address)
+        yield ctx.pop(return_array)
+
+        yield instrs.LoadProgram(return_array, return_address)
 
 
 @compile_node.register(ast.Call)
@@ -376,9 +438,22 @@ def _compute_subscript(node, ctx):
 
 @compute_into_register.register(ast.BinOp)
 def _binop(node, ctx):
+    if node.op == '-' and isinstance(node.rhs, (ast.Global, ast.UIntLiteral)):
+        # small optimization, make this an add of -n
+        lhs = yield from compute_into_register(node.lhs, ctx)
+
+        with ctx.registers.occupy() as rhs:
+            yield ctx.immediate(rhs, -node.rhs.value % 2 ** 32)
+            yield instrs.Addition(lhs, lhs, rhs)
+
+        return lhs
+
     lhs = yield from compute_into_register(node.lhs, ctx)
     with (yield from compute_into_register(node.rhs, ctx)) as rhs:
         if node.op == '+':
+            yield instrs.Addition(lhs, lhs, rhs)
+        elif node.op == '-':
+            yield instrs.NotAnd(rhs, rhs, rhs)
             yield instrs.Addition(lhs, lhs, rhs)
         elif node.op == '*':
             yield instrs.Multiplication(lhs, lhs, rhs)
@@ -387,7 +462,50 @@ def _binop(node, ctx):
         else:
             raise NotImplementedError(f'op {node.op} not supported')
 
+    if node.op == '-':
+        with ctx.registers.occupy() as imm:
+            yield ctx.immediate(imm, 1)
+            yield instrs.Addition(lhs, lhs, imm)
+
     return lhs
+
+
+_unop_funcs = {
+    '-': operator.neg,
+    '~': operator.invert,
+    'not': operator.not_,
+}
+
+
+@compute_into_register.register(ast.UnOp)
+def _unop(node, ctx):
+    if node.op == '+':
+        # nop
+        return compute_into_register(node.operand, ctx)
+
+    if isinstance(node.operand, (ast.Global, ast.UIntLiteral)):
+        out = ctx.registers.occupy()
+        try:
+            yield ctx.immediate(_unop_funcs[node.op](node.operand))
+        except KeyError:
+            raise NotImplementedError(f'op {node.op} not supported')
+        return out
+
+    out = yield from compute_into_register(node.operand, ctx)
+    if node.op == '-':
+        yield instrs.NotAnd(out, out, out)
+        with ctx.registers.occupy() as imm:
+            yield ctx.immediate(imm, 1)
+            yield instrs.Addition(out, out, imm)
+    elif node.op == '~':
+        yield instrs.NotAnd(out, out, out)
+    elif node.op == 'not':
+        with ctx.registers.occupy() as false:
+            yield ctx.immediate(false, 0)
+            # write a false to out iff out is true
+            yield instrs.ConditionalMove(out, false, out)
+
+    return out
 
 
 def _assign_name(node, ctx):
@@ -422,7 +540,6 @@ def _assign_subscript(node, ctx):
                 yield instrs.ArrayAmmendment(arr, ix, rhs)
 
 
-
 @compile_node.register(ast.Assignment)
 def _assignment(node, ctx):
     if isinstance(node.lhs, ast.Subscript):
@@ -431,7 +548,7 @@ def _assignment(node, ctx):
     return _assign_name(node, ctx)
 
 
-def _write_static_allocations(ctx, static_allocations, function_bodies):
+def _write_static_allocations(ctx, static_allocations):
     with ctx.registers.occupy() as imm:
         yield ctx.immediate(imm, len(static_allocations))
         yield instrs.Allocation(Register.pic_table, imm)
@@ -447,9 +564,10 @@ def _write_static_allocations(ctx, static_allocations, function_bodies):
         main = None
 
         for node, address in static_allocations.items():
-            if isinstance(node, ast.FunctionDef):
+            if isinstance(node, (ast.FunctionDef, ast.IfBranch)):
                 data = [
-                    instr.raw_instruction for instr in function_bodies[node]
+                    instr.raw_instruction
+                    for instr in ctx.function_bodies[node]
                 ]
                 alloc_size = len(data)
                 offset = 0
@@ -527,10 +645,8 @@ def compile_ast(nodes):
     static_allocations = dict(
         _static_allocations_without_literal_arrays(nodes),
     )
-
-    ctx = Context(static_allocations)
-
     function_bodies = {}
+    ctx = Context(static_allocations, function_bodies)
     for node in nodes:
         if isinstance(node, ast.FunctionDef):
             function_bodies[node] = list(_ll_instrs(compile_node(node, ctx)))
@@ -540,6 +656,5 @@ def compile_ast(nodes):
         for ll in _ll_instrs(_write_static_allocations(
             ctx,
             static_allocations,
-            function_bodies,
         ))
     )

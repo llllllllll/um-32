@@ -1,22 +1,14 @@
-def f(a: uint) -> void:
-    um.putchar(97)
-    um.putchar(10)
-    um.putchar(g(a))
-    um.putchar(10)
+def _inner_print(cs: array, n: uint) -> void:
+    if n:
+        um.putchar(cs[um.len(cs) - n])
+        _inner_print(cs, n - 1)
+    else:
+        um.putchar(10)
 
-def g(a: uint) -> uint:
-    um.putchar(a)
-    um.putchar(10)
-    return 99
+
+def print(cs: array) -> void:
+    _inner_print(cs, um.len(cs))
+
 
 def main() -> void:
-    a: array = um.alloc(3)
-    a[0] = 65
-    a[1] = 66
-    a[2] = 67
-
-    um.putchar(a[0])
-    um.putchar(a[1])
-    um.putchar(a[2])
-
-    um.free(a)
+    print("hello world")

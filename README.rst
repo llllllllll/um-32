@@ -121,14 +121,25 @@ look like:
 
 .. code-block:: python
 
-   def print(cs: array) -> void:
-       for c in cs:
-           um.putchar(c)
+   def _inner_print(cs: array, n: uint) -> void:
+       if n:
+           # there are characters left to print
+           ix: uint = um.len(cs) - n
+           um.putchar(cs[ix])
 
-       um.putchar(10)  # newline
+           # recurse
+           _inner_print(cs, n - 1)
+       else:
+           # no more characters, print the trailing newline
+           um.putchar(10)
+
+
+   def print(cs: array) -> void:
+       _inner_print(cs, um.len(cs))
+
 
    def main() -> void:
-       print("Hello World!")
+       print("hello world")
 
 
 ``um.putchar`` is a built-in macro which writes a single character to the
