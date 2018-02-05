@@ -142,7 +142,8 @@ look like:
        print("hello world")
 
 
-``um.putchar`` is a built-in macro which writes a single character to the
-terminal.
+``um.putchar`` is a built-in function which writes a single character to the
+terminal. ``um.len`` is a built-in function which returns the length of an
+array.
 
 See ``compiler/README.rst`` for implementation details.
