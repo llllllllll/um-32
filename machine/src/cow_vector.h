@@ -25,7 +25,7 @@ private:
         }
 
         operator const T&() const {
-            return m_vector.at[m_index];
+            return m_vector.at(m_index);
         }
 
         operator T&() {

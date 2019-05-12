@@ -130,9 +130,9 @@ Performance
    0.   a8d1619e.5540e6cf
    SANDmark complete.
 
-   real	0m16.840s
-   user	0m16.798s
-   sys	0m0.010s
+   real	0m16.275s
+   user	0m16.234s
+   sys	0m0.006s
 
 ``UML`` - The Universal Machine Language
 ----------------------------------------

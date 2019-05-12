@@ -1,7 +1,7 @@
 CXX ?= g++
 OPTLEVEL ?= 3
 
-CXXFLAGS += -Wall -Wextra -std=gnu++17 -g -O$(OPTLEVEL)
+CXXFLAGS += -Wall -Wextra -std=gnu++17 -g -flto -O$(OPTLEVEL)
 
 COW_VECTOR ?= 0
 ifneq ($(COW_VECTOR),0)
@@ -18,6 +18,11 @@ ifneq ($(NO_PREDICTION),0)
 	CXXFLAGS += -DUM_NO_PREDICTION=$(NO_PREDICTION)
 endif
 
+JEMALLOC ?= 1
+ifneq ($(JEMALLOC),0)
+	LDFLAGS += -Ljemalloc
+endif
+
 ALL_FLAGS := 'CFLAGS=$(CFLAGS) CXXFLAGS=$(CXXFLAGS) LDFLAGS=$(LDFLAGS)'
 
 all: um
@@ -28,7 +33,7 @@ force:
 	@echo '$(ALL_FLAGS)' | cmp -s - $@ || echo '$(ALL_FLAGS)' > $@
 
 um: machine/src/main.cc .compiler_flags
-	$(CXX)  $(CXXFLAGS) $< -o $@
+	$(CXX) $(CXXFLAGS) $(LDFLAGS) $< -o $@
 
 .PHONY: bench
 bench: um
