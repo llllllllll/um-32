@@ -238,6 +238,8 @@ public:
         case opcode::orthography:
             orthography(instruction);
             return;
+        default:
+            __builtin_unreachable();
         }
     }
 

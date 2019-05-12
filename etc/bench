@@ -1,0 +1,19 @@
+#!/bin/bash
+
+show-stats() {
+    g++ --version
+    sudo lscpu
+    echo
+    cpupower frequency-info
+}
+
+run() {
+    printf '\n./um samples/midmark.um'
+    time ./um samples/midmark.um
+
+    printf '\n./um samples/sandmark.umz'
+    time ./um samples/sandmark.umz
+}
+
+show-stats
+run
