@@ -53,7 +53,7 @@ std::array<std::string, 14> opname = {
     "orthography",
 };
 
-platter extract_bits(platter p , uint8_t start, uint8_t count) {
+platter extract_bits(platter p, uint8_t start, uint8_t count) {
     platter mask = ((1 << count) - 1) << start;
     return (p & mask) >> start;
 }
@@ -70,57 +70,58 @@ private:
     std::vector<array_vector<platter>> m_arrays;
     std::size_t m_execution_finger;
 
-    struct halting {};
-
     opcode read_opcode(platter p) {
         return static_cast<opcode>(extract_bits(p, 28, 4));
     }
 
-    std::tuple<platter&, platter&, platter&> read_registers(platter p) {
-        platter a_index = extract_bits(p, 6, 3);
-        platter b_index = extract_bits(p, 3, 3);
-        platter c_index = extract_bits(p, 0, 3);
-
-        return {m_registers[a_index],
-                m_registers[b_index],
-                m_registers[c_index]};
+    template<std::size_t... ixs>
+    auto read_registers(platter p) {
+        return std::tie(m_registers[extract_bits(p, 6 - (ixs * 3), 3)]...);
     }
 
-    void conditional_move(platter& a, platter& b, platter& c) {
+    void conditional_move(platter instruction) {
+        auto [a, b, c] = read_registers<0, 1, 2>(instruction);
         if (c) {
             a = b;
         }
     }
 
-    void array_index(platter& a, platter& b, platter& c) {
+    void array_index(platter instruction) {
+        auto [a, b, c] = read_registers<0, 1, 2>(instruction);
         a = m_arrays[b][c];
     }
 
-    void array_amendment(platter& a, platter& b, platter& c) {
+    void array_amendment(platter instruction) {
+        auto [a, b, c] = read_registers<0, 1, 2>(instruction);
         m_arrays[a][b] = c;
     }
 
-    void addition(platter& a, platter& b, platter& c) {
+    void addition(platter instruction) {
+        auto [a, b, c] = read_registers<0, 1, 2>(instruction);
         a = b + c;
     }
 
-    void multiplication(platter& a, platter& b, platter& c) {
+    void multiplication(platter instruction) {
+        auto [a, b, c] = read_registers<0, 1, 2>(instruction);
         a = b * c;
     }
 
-    void division(platter& a, platter& b, platter& c) {
+    void division(platter instruction) {
+        auto [a, b, c] = read_registers<0, 1, 2>(instruction);
         a = b / c;
     }
 
-    void not_and(platter& a, platter& b, platter& c) {
+    void not_and(platter instruction) {
+        auto [a, b, c] = read_registers<0, 1, 2>(instruction);
         a = ~(b & c);
     }
 
-    void halt(platter&, platter&, platter&) {
-        throw halting{};
+    void halt(platter) {
+        std::exit(0);
     }
 
-    void allocation(platter&, platter& b, platter& c) {
+    void allocation(platter instruction) {
+        auto [b, c] = read_registers<1, 2>(instruction);
         if (m_free_list.size()) {
             platter address = m_free_list.back();
             m_free_list.pop_back();
@@ -136,51 +137,41 @@ private:
         }
     }
 
-    void abandonment(platter&, platter&, platter& c) {
+    void abandonment(platter instruction) {
+        auto [c] = read_registers<2>(instruction);
         m_arrays[c].clear();
         m_free_list.push_back(c);
     }
 
-    void output(platter&, platter&, platter& c) {
+    void output(platter instruction) {
+        auto [c] = read_registers<2>(instruction);
         std::putchar(c);
     }
 
-    void input(platter&, platter&, platter& c) {
+    void input(platter instruction) {
+        auto [c] = read_registers<2>(instruction);
         c = std::getchar();
     }
 
-    void load_program(platter&, platter& b, platter& c) {
+    void load_program(platter instruction) {
+        auto [b, c] = read_registers<1, 2>(instruction);
         m_execution_finger = c;
         if (b) {
             m_arrays[0] = m_arrays[b];
         }
     }
 
-    void orthography(platter& a, platter value) {
-        a = value;
+    void orthography(platter instruction) {
+        std::uint8_t a_index = extract_bits(instruction, 25, 3);
+        platter value = extract_bits(instruction, 0, 25);
+
+        m_registers[a_index] = value;
     }
 
-    using instruction_impl = void (machine::*)(platter&, platter&, platter&);
-    static constexpr std::array<instruction_impl, 13> m_dispatch_table {
-        &machine::conditional_move,
-        &machine::array_index,
-        &machine::array_amendment,
-        &machine::addition,
-        &machine::multiplication,
-        &machine::division,
-        &machine::not_and,
-        &machine::halt,
-        &machine::allocation,
-        &machine::abandonment,
-        &machine::output,
-        &machine::input,
-        &machine::load_program,
-    };
-
 public:
-    machine(const array_vector<platter>& program)
+    machine(array_vector<platter>&& program)
         : m_registers({0, 0, 0, 0, 0, 0, 0, 0}),
-          m_arrays({program}),
+          m_arrays({std::move(program)}),
           m_execution_finger(0) {}
 
     static machine parse(std::istream& stream) {
@@ -192,60 +183,71 @@ public:
             throw malformed_program();
         }
 
-        array_vector<platter> program(size / 4, 0);
+        array_vector<platter> program(size / 4);
 
         stream.read(reinterpret_cast<char*>(program.data()), size);
 
         for (platter& p : program) {
             p = __builtin_bswap32(p);
         }
-        return program;
+        return machine(std::move(program));
     }
 
     void step() {
         platter instruction = m_arrays[0][m_execution_finger++];
-        opcode op = read_opcode(instruction);
-
-        if (op == opcode::orthography) {
-            uint8_t a_index = extract_bits(instruction, 25, 3);
-            platter value = extract_bits(instruction, 0, 25);
-
-#ifdef UM_PRINT_TRACE
-            std::cout << opname[static_cast<uint8_t>(op)]
-                << '(' << static_cast<int>(a_index) << ", " << value << ")\n";
-#endif
-
-            orthography(m_registers[a_index], value);
+        switch (read_opcode(instruction)) {
+        case opcode::conditional_move:
+            conditional_move(instruction);
+            return;
+        case opcode::array_index:
+            array_index(instruction);
+            return;
+        case opcode::array_amendment:
+            array_amendment(instruction);
+            return;
+        case opcode::addition:
+            addition(instruction);
+            return;
+        case opcode::multiplication:
+            multiplication(instruction);
+            return;
+        case opcode::division:
+            division(instruction);
+            return;
+        case opcode::not_and:
+            not_and(instruction);
+            return;
+        case opcode::halt:
+            halt(instruction);
+            return;
+        case opcode::allocation:
+            allocation(instruction);
+            return;
+        case opcode::abandonment:
+            abandonment(instruction);
+            return;
+        case opcode::output:
+            output(instruction);
+            return;
+        case opcode::input:
+            input(instruction);
+            return;
+        case opcode::load_program:
+            load_program(instruction);
+            return;
+        case opcode::orthography:
+            orthography(instruction);
             return;
         }
-
-        auto registers = read_registers(instruction);
-
-#ifdef UM_PRINT_TRACE
-        std::cout << opname[static_cast<uint8_t>(op)]
-                  << '(' << std::get<0>(registers)
-                  << ", " << std::get<1>(registers)
-                  << ", " << std::get<2>(registers)
-                  << ")\n";;
-#endif
-
-        std::apply(m_dispatch_table[static_cast<uint8_t>(op)],
-                   std::tuple_cat(std::make_tuple(this), std::move(registers)));
     }
 
     void run() {
         while (true) {
-            try {
-                step();
-            }
-            catch (halting&) {
-                break;
-            }
+            step();
         }
     }
 };
 }  // namespace um
-
 
 int main(int argc, char** argv) {
     if (argc != 2) {

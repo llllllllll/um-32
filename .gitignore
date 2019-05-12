@@ -13,3 +13,5 @@ scratch.py
 callgrind.out.*
 
 compiler/a.um
+
+.compiler_flags

@@ -47,15 +47,13 @@ public:
     cow_vector(std::initializer_list<T> items)
         : m_data(std::make_shared<std::vector<T, Alloc>>(items)) {}
 
-    cow_vector(std::size_t size, const T& value)
+    cow_vector(std::size_t size, const T& value = T())
         : m_data(std::make_shared<std::vector<T, Alloc>>(size, value)) {}
 
-    cow_vector(const cow_vector& cpfrom) : m_data(cpfrom.m_data) {}
-
-    cow_vector& operator=(const cow_vector& cpfrom) {
-        m_data = cpfrom.m_data;
-        return *this;
-    }
+    cow_vector(const cow_vector&) = default;
+    cow_vector(cow_vector&&) = default;
+    cow_vector& operator=(const cow_vector&) = default;
+    cow_vector& operator=(cow_vector&&) = default;
 
     cow_vector_subscript operator[](std::size_t index) {
         return {*this, index};

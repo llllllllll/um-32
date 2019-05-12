@@ -19,38 +19,65 @@ When compiling, the following options may be set:
 
 Use copy-on-write vectors for the arrays. This adds a performance penalty to
 array reads and writes; but, it make load program much faster in most
-cases.
-
-``-D UM_PRINT_TRACE``
-~~~~~~~~~~~~~~~~~~~~~~
-
-Print the name of each instruction and the values of each argument before
-execution. This is useful to provide a debugging information.
-
+cases. This is slightly worse for the midmark and sandmark benchmarks, but the
+``uml`` language doesn't currently use self-modifying code, so it makes loading
+arrays (calling functions and branches) much faster.
 
 Performance
 -----------
 
 .. code-block:: bash
 
-   [jo4 um-32]$ sudo lshw -class cpu
-     *-cpu
-          description: CPU
-          product: Intel(R) Core(TM) i7-6600U CPU @ 2.60GHz
-          vendor: Intel Corp.
-          physical id: 7
-          bus info: cpu@0
-          version: Intel(R) Core(TM) i7-6600U CPU @ 2.60GHz
-          serial: None
-          slot: U3E1
-          size: 1080MHz
-          capacity: 4005MHz
-          width: 64 bits
-          clock: 100MHz
-          capabilities: x86-64 fpu fpu_exception wp vme de pse tsc msr pae mce cx8 apic sep mtrr pge mca cmov pat pse36 clflush dts acpi mmx fxsr sse sse2 ss ht tm pbe syscall nx pdpe1gb rdtscp constant_tsc art arch_perfmon pebs bts rep_good nopl xtopology nonstop_tsc cpuid aperfmperf tsc_known_freq pni pclmulqdq dtes64 monitor ds_cpl vmx smx est tm2 ssse3 sdbg fma cx16 xtpr pdcm pcid sse4_1 sse4_2 x2apic movbe popcnt aes xsave avx f16c rdrand lahf_lm abm 3dnowprefetch cpuid_fault epb intel_pt tpr_shadow vnmi flexpriority ept vpid fsgsbase tsc_adjust bmi1 hle avx2 smep bmi2 erms invpcid rtm mpx rdseed adx smap clflushopt xsaveopt xsavec xgetbv1 xsaves dtherm ida arat pln pts hwp hwp_notify hwp_act_window hwp_epp cpufreq
-       configuration: cores=2 enabledcores=2 threads=4
+   $ make bench
+   g++ (GCC) 8.2.1 20181127
+   Copyright (C) 2018 Free Software Foundation, Inc.
+   This is free software; see the source for copying conditions.  There is NO
+   warranty; not even for MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
 
-   [joe um-32]$ time ./um samples/midmark.um
+   Architecture:        x86_64
+   CPU op-mode(s):      32-bit, 64-bit
+   Byte Order:          Little Endian
+   Address sizes:       39 bits physical, 48 bits virtual
+   CPU(s):              4
+   On-line CPU(s) list: 0-3
+   Thread(s) per core:  2
+   Core(s) per socket:  2
+   Socket(s):           1
+   NUMA node(s):        1
+   Vendor ID:           GenuineIntel
+   CPU family:          6
+   Model:               78
+   Model name:          Intel(R) Core(TM) i7-6600U CPU @ 2.60GHz
+   Stepping:            3
+   CPU MHz:             3204.468
+   CPU max MHz:         3400.0000
+   CPU min MHz:         400.0000
+   BogoMIPS:            5618.00
+   Virtualization:      VT-x
+   L1d cache:           32K
+   L1i cache:           32K
+   L2 cache:            256K
+   L3 cache:            4096K
+   NUMA node0 CPU(s):   0-3
+   Flags:               fpu vme de pse tsc msr pae mce cx8 apic sep mtrr pge mca cmov pat pse36 clflush dts acpi mmx fxsr sse sse2 ss ht tm pbe syscall nx pdpe1gb rdtscp lm constant_tsc art arch_perfmon pebs bts rep_good nopl xtopology nonstop_tsc cpuid aperfmperf tsc_known_freq pni pclmulqdq dtes64 monitor ds_cpl vmx smx est tm2 ssse3 sdbg fma cx16 xtpr pdcm pcid sse4_1 sse4_2 x2apic movbe popcnt aes xsave avx f16c rdrand lahf_lm abm 3dnowprefetch cpuid_fault epb invpcid_single pti tpr_shadow vnmi flexpriority ept vpid ept_ad fsgsbase tsc_adjust bmi1 hle avx2 smep bmi2 erms invpcid rtm mpx rdseed adx smap clflushopt intel_pt xsaveopt xsavec xgetbv1 xsaves dtherm ida arat pln pts hwp hwp_notify hwp_act_window hwp_epp
+
+   analyzing CPU 0:
+     driver: intel_pstate
+     CPUs which run at the same hardware frequency: 0
+     CPUs which need to have their frequency coordinated by software: 0
+     maximum transition latency:  Cannot determine or is not supported.
+     hardware limits: 400 MHz - 3.40 GHz
+     available cpufreq governors: performance powersave
+     current policy: frequency should be within 400 MHz and 3.40 GHz.
+                     The governor "performance" may decide which speed to use
+                     within this range.
+     current CPU frequency: Unable to call hardware
+     current CPU frequency: 3.20 GHz (asserted by call to kernel)
+     boost state support:
+       Supported: yes
+       Active: yes
+
+   ./um samples/midmark.um
     == UM beginning stress test / benchmark.. ==
    4.   12345678.09abcdef
    3.   6d58165c.2948d58d
@@ -59,11 +86,11 @@ Performance
    0.   583e02ae.490775c0
    Benchmark complete.
 
-   real	   0m0.405s
-   user	   0m0.397s
-   sys	   0m0.007s
+   real	0m0.258s
+   user	0m0.251s
+   sys	0m0.007s
 
-   [joe um-32]$ time ./um samples/sandmark.umz
+   ./um samples/sandmark.umz
    trying to Allocate array of size 0..
    trying to Abandon size 0 allocation..
    trying to Allocate size 11..
@@ -89,7 +116,7 @@ Performance
    99.  6d58165c.2948d58d
    98.  0f63b9ed.1d9c4076
 
-      ...
+       ...
 
    3.   7c7394b2.476c1ee5
    2.   f3a52453.19cc755d
@@ -97,10 +124,9 @@ Performance
    0.   a8d1619e.5540e6cf
    SANDmark complete.
 
-   real	   0m31.133s
-   user	   0m31.084s
-   sys	   0m0.007s
-
+   real	0m18.272s
+   user	0m18.149s
+   sys	0m0.013s
 
 ``UML`` - The Universal Machine Language
 ----------------------------------------
