@@ -127,7 +127,7 @@ private:
             m_free_list.pop_back();
 
             auto& vec = m_arrays[address];
-            vec.insert(vec.begin(), c, 0);
+            vec.insert(vec.end(), c, 0);
 
             b = address;
         }

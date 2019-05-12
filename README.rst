@@ -87,8 +87,8 @@ Performance
    Benchmark complete.
 
    real	0m0.258s
-   user	0m0.251s
-   sys	0m0.007s
+   user	0m0.254s
+   sys	0m0.003s
 
    ./um samples/sandmark.umz
    trying to Allocate array of size 0..
@@ -124,9 +124,9 @@ Performance
    0.   a8d1619e.5540e6cf
    SANDmark complete.
 
-   real	0m18.272s
-   user	0m18.149s
-   sys	0m0.013s
+   real	0m18.231s
+   user	0m18.197s
+   sys	0m0.000s
 
 ``UML`` - The Universal Machine Language
 ----------------------------------------
