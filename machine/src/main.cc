@@ -63,14 +63,66 @@ public:
     malformed_program() : std::invalid_argument("malformed_program") {}
 };
 
+#if defined(UM_TRACE_OP_CODES)
+#define STR2(x) #x
+#define STR(x) STR2(x)
+
+class op_code_tracer {
+private:
+    std::fstream m_out;
+    std::size_t m_predictions = 0;
+    std::size_t m_mispredictions = 0;
+
+public:
+    op_code_tracer() : m_out(STR(UM_TRACE_OP_CODES), m_out.out | m_out.binary) {}
+
+    void operator()(std::uint8_t op) {
+        m_out << op;
+    }
+
+    void prediction(bool b) {
+        if (b) {
+            m_predictions += 1;
+        }
+        else {
+            m_mispredictions += 1;
+        }
+    }
+
+    void flush() {
+        std::cerr << "\n\n====   predicted: " << m_predictions
+                  << "\n====mispredicted: " << m_mispredictions << "\n====           %: "
+                  << static_cast<double>(m_predictions) /
+                         (m_predictions + m_mispredictions)
+                  << '\n';
+        m_out.flush();
+    }
+};
+#undef STR
+#undef STR2
+#else
+struct op_code_tracer {
+    void operator()(std::uint8_t) {}
+
+    void prediction(bool) {}
+
+    void flush() {}
+};
+#endif
+
 class machine {
 private:
     std::array<platter, 8> m_registers;
     std::vector<platter> m_free_list;
     std::vector<array_vector<platter>> m_arrays;
     std::size_t m_execution_finger;
+    op_code_tracer m_trace_ops;
 
-    opcode read_opcode(platter p) {
+    platter current_instruction() const {
+        return m_arrays[0][m_execution_finger];
+    }
+
+    opcode read_opcode(platter p) const {
         return static_cast<opcode>(extract_bits(p, 28, 4));
     }
 
@@ -79,11 +131,28 @@ private:
         return std::tie(m_registers[extract_bits(p, 6 - (ixs * 3), 3)]...);
     }
 
+    template<opcode prediction, typename F>
+    void predict([[maybe_unused]] F&& f) {
+#ifndef UM_NO_PREDICTION
+        platter instruction = current_instruction();
+        if (__builtin_expect(read_opcode(instruction) == prediction, 1)) {
+            m_trace_ops.prediction(true);
+            ++m_execution_finger;
+            f(instruction);
+        }
+        else {
+            m_trace_ops.prediction(false);
+        }
+#endif
+    }
+
     void conditional_move(platter instruction) {
         auto [a, b, c] = read_registers<0, 1, 2>(instruction);
         if (c) {
             a = b;
         }
+
+        predict<opcode::load_program>([&](auto instr) { load_program(instr); });
     }
 
     void array_index(platter instruction) {
@@ -94,6 +163,8 @@ private:
     void array_amendment(platter instruction) {
         auto [a, b, c] = read_registers<0, 1, 2>(instruction);
         m_arrays[a][b] = c;
+
+        predict<opcode::orthography>([&](auto instr) { orthography(instr); });
     }
 
     void addition(platter instruction) {
@@ -117,6 +188,7 @@ private:
     }
 
     void halt(platter) {
+        m_trace_ops.flush();
         std::exit(0);
     }
 
@@ -135,17 +207,23 @@ private:
             m_arrays.emplace_back(c, 0);
             b = m_arrays.size() - 1;
         }
+
+        predict<opcode::orthography>([&](auto instr) { orthography(instr); });
     }
 
     void abandonment(platter instruction) {
         auto [c] = read_registers<2>(instruction);
         m_arrays[c].clear();
         m_free_list.push_back(c);
+
+        predict<opcode::conditional_move>([&](auto instr) { conditional_move(instr); });
     }
 
     void output(platter instruction) {
         auto [c] = read_registers<2>(instruction);
         std::putchar(c);
+
+        predict<opcode::orthography>([&](auto instr) { orthography(instr); });
     }
 
     void input(platter instruction) {
@@ -194,8 +272,11 @@ public:
     }
 
     void step() {
-        platter instruction = m_arrays[0][m_execution_finger++];
-        switch (read_opcode(instruction)) {
+        platter instruction = current_instruction();
+        ++m_execution_finger;
+        opcode op = read_opcode(instruction);
+        m_trace_ops(static_cast<std::uint8_t>(op));
+        switch (op) {
         case opcode::conditional_move:
             conditional_move(instruction);
             return;

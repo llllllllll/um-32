@@ -14,14 +14,20 @@ Options
 
 When compiling, the following options may be set:
 
-``-D UM_COW_VECTOR``
-~~~~~~~~~~~~~~~~~~~~
+``COW_VECTOR=1``
+~~~~~~~~~~~~~~~~
 
 Use copy-on-write vectors for the arrays. This adds a performance penalty to
 array reads and writes; but, it make load program much faster in most
 cases. This is slightly worse for the midmark and sandmark benchmarks, but the
 ``uml`` language doesn't currently use self-modifying code, so it makes loading
 arrays (calling functions and branches) much faster.
+
+``TRACE_OP_CODES=<path/to/trace``
+~~~~~~~~~~~~~~~~~~~~
+
+Write each opcode executed to a binary file defined by the option. This is used
+to build the prediction options.
 
 Performance
 -----------
@@ -86,9 +92,9 @@ Performance
    0.   583e02ae.490775c0
    Benchmark complete.
 
-   real	0m0.247s
-   user	0m0.247s
-   sys	0m0.000s
+   real	0m0.225s
+   user	0m0.221s
+   sys	0m0.003s
 
    ./um samples/sandmark.umz
    trying to Allocate array of size 0..
@@ -124,9 +130,9 @@ Performance
    0.   a8d1619e.5540e6cf
    SANDmark complete.
 
-   real	0m17.796s
-   user	0m17.758s
-   sys	0m0.003s
+   real	0m16.840s
+   user	0m16.798s
+   sys	0m0.010s
 
 ``UML`` - The Universal Machine Language
 ----------------------------------------
